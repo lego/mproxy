@@ -1,0 +1,22 @@
+hash: 4351847a9749658fdc773d4d3fd58c53ef63117b6df30d6ee2eec8520106d5a0
+updated: 2017-03-11T11:35:29.5796522-08:00
+imports:
+- name: github.com/go-mgo/mgo
+  version: 3f83fa5005286a7fe593b055f0d7771a7dce4655
+  subpackages:
+  - bson
+- name: github.com/mattn/go-colorable
+  version: acb9493f2794fd0f820de7a27a217dafbb1b65ea
+- name: github.com/mattn/go-isatty
+  version: 57fdcb988a5c543893cc61bce354a6e24ab70022
+- name: github.com/mgutz/ansi
+  version: 9520e82c474b0a04dd04f8a40959027271bab992
+- name: golang.org/x/sys
+  version: 99f16d856c9836c42d24e7ab64ea72916925fa97
+  subpackages:
+  - unix
+- name: gopkg.in/mgo.v2
+  version: 3f83fa5005286a7fe593b055f0d7771a7dce4655
+  subpackages:
+  - internal/json
+testImports: []

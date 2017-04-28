@@ -1,0 +1,4 @@
+package: github.com/xLegoz/mproxy
+import:
+- package: github.com/mgutz/ansi
+- package: gopkg.in/mgo.v2
