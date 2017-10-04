@@ -4,7 +4,7 @@ require 'mongo'
 log = Logger.new(STDOUT)
 log.level = Logger::DEBUG
 
-address = '127.0.0.1:27018'
+address = '127.0.0.1:9999'
 database = 'test'
 
 log.info("Connecting to address=#{address} database=#{database}")

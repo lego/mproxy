@@ -22,7 +22,7 @@ func main() {
 		"INFO: ",
 		log.Lshortfile)
 	mgo.SetLogger(logger)
-	session, err := mgo.Dial("127.0.0.1:27018/test")
+	session, err := mgo.Dial("127.0.0.1:9999/test")
 	if err != nil {
 		panic(err)
 	}

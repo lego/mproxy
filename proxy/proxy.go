@@ -125,7 +125,7 @@ func readString(r *bytes.Buffer) string {
 	return str[:len(str)-1]
 }
 
-func readBSON(buf *bytes.Buffer) ([]byte, error) {
+func readRawBSON(buf *bytes.Buffer) ([]byte, error) {
 	if buf.Len() < 4 {
 		return nil, io.ErrUnexpectedEOF
 	}
@@ -138,6 +138,18 @@ func readBSON(buf *bytes.Buffer) ([]byte, error) {
 	doc := make([]byte, length)
 	_, err := io.ReadFull(buf, doc)
 	return doc, err
+}
+
+func readBSON(buf *bytes.Buffer) (bson.D, error) {
+	docRawBSON, err := readRawBSON(buf)
+	if err != nil {
+		return nil, err
+	}
+	var doc bson.D
+	if err := bson.Unmarshal(docRawBSON, &doc); err != nil {
+		return nil, err
+	}
+	return doc, nil
 }
 
 func fill(r *bytes.Buffer, b []byte) error {
@@ -274,7 +286,7 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 
 			p.Log.Debug("Limit: %d", limit)
 
-			rawBson, err := readBSON(mongobuf)
+			rawBson, err := readRawBSON(mongobuf)
 			if err != nil {
 				p.Log.Debug("Failed to parse query: %s", err)
 			}
@@ -315,6 +327,75 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 				}
 				shouldDualWrite = true
 			}
+		} else if opCode == 2010 {
+			var database = readString(mongobuf)
+			if err != nil {
+				p.Log.Debug("Failed to read database: %s", err)
+			} else {
+				p.Log.Debug("   database=%s", database)
+			}
+
+			var commandName = readString(mongobuf)
+			if err != nil {
+				p.Log.Debug("Failed to read commandName: %s", err)
+			} else {
+				p.Log.Debug("   commandName=%s", commandName)
+			}
+
+			metadata, err := readBSON(mongobuf)
+			if err != nil {
+				p.Log.Debug("Failed to read BSON: %s", err)
+			} else {
+				p.Log.Debug("   metadata=%v", metadata)
+			}
+
+			commandArgs, err := readBSON(mongobuf)
+			if err != nil {
+				p.Log.Debug("Failed to read BSON: %s", err)
+			} else {
+				p.Log.Debug("   commandArgs=%v", commandArgs)
+			}
+
+			for mongobuf.Len() != 0 {
+				document, err := readBSON(mongobuf)
+				if err != nil {
+					p.Log.Debug("Failed to read BSON: %s", err)
+				} else {
+					p.Log.Debug("   document=%v", document)
+				}
+			}
+
+			// document metadata;    // a BSON document containing any metadata
+			// document commandArgs; // a BSON document containing the command arguments
+			// inputDocs;            // a set of zero or more documents
+		} else if opCode == 1 {
+			type replyOp struct {
+				Flags     uint32
+				CursorID  int64
+				FirstDoc  int32
+				ReplyDocs int32
+			}
+
+			reply := replyOp{}
+			err = binary.Read(mongobuf, binary.LittleEndian, &reply)
+			if err != nil {
+				p.Log.Debug("Failed to read flags: %s", err)
+			}
+
+			for mongobuf.Len() != 0 {
+				document, err := readBSON(mongobuf)
+				if err != nil {
+					p.Log.Debug("Failed to read BSON: %s", err)
+				} else {
+					p.Log.Debug("   document=%v", document)
+				}
+			}
+
+			// int32     responseFlags;  // bit vector - see details below
+			// int64     cursorID;       // cursor id if client needs to do get more's
+			// int32     startingFrom;   // where in the cursor this reply is starting
+			// int32     numberReturned; // number of documents in the reply
+			// document* documents;      // documents
 		}
 
 		// 	err = bson.Unmarshal(queryop_bytes, &out)
