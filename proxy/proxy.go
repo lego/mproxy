@@ -3,12 +3,10 @@ package proxy
 import (
 	"bytes"
 	"crypto/tls"
-	"encoding/binary"
 	"io"
 	"net"
 
 	"github.com/lego/mproxy/mongo"
-	"gopkg.in/mgo.v2/bson"
 )
 
 // Proxy - Manages a Proxy connection, piping data between local and remote.
@@ -108,82 +106,14 @@ func (p *Proxy) err(s string, err error) {
 	p.erred = true
 }
 
-func readInt32(r *bytes.Buffer) (int32, error) {
-	var b = make([]byte, 4)
-	_, err := r.Read(b)
-	if err != nil {
-		return 0, err
-	}
-	return (int32(b[0])) |
-		(int32(b[1]) << 8) |
-		(int32(b[2]) << 16) |
-		(int32(b[3]) << 24), nil
-}
-
-func readString(r *bytes.Buffer) string {
-	str, _ := r.ReadString(0x0)
-	return str[:len(str)-1]
-}
-
-func readRawBSON(buf *bytes.Buffer) ([]byte, error) {
-	if buf.Len() < 4 {
-		return nil, io.ErrUnexpectedEOF
-	}
-
-	length := binary.LittleEndian.Uint32(buf.Bytes())
-	if int(length) > buf.Len() {
-		return nil, io.ErrUnexpectedEOF
-	}
-
-	doc := make([]byte, length)
-	_, err := io.ReadFull(buf, doc)
-	return doc, err
-}
-
-func readBSON(buf *bytes.Buffer) (bson.D, error) {
-	docRawBSON, err := readRawBSON(buf)
-	if err != nil {
-		return nil, err
-	}
-	var doc bson.D
-	if err := bson.Unmarshal(docRawBSON, &doc); err != nil {
-		return nil, err
-	}
-	return doc, nil
-}
-
-func fill(r *bytes.Buffer, b []byte) error {
-	l := len(b)
-	n, err := r.Read(b)
-	for n != l && err == nil {
-		var ni int
-		ni, err = r.Read(b[n:])
-		n += ni
-	}
-	return err
-}
-
 func WriteInt(b *bytes.Buffer, i int32) {
+	// FIXME(joey): replace with binary.Write(..., binary.LittleEndian, ...)
 	b.Write([]byte{
 		byte(i),
 		byte(i >> 8),
 		byte(i >> 16),
 		byte(i >> 24),
 	})
-}
-
-func setInt32(b []byte, pos int, i int32) {
-	b[pos] = byte(i)
-	b[pos+1] = byte(i >> 8)
-	b[pos+2] = byte(i >> 16)
-	b[pos+3] = byte(i >> 24)
-}
-
-func setString(b []byte, pos int, i int32) {
-	b[pos] = byte(i)
-	b[pos+1] = byte(i >> 8)
-	b[pos+2] = byte(i >> 16)
-	b[pos+3] = byte(i >> 24)
 }
 
 func (p *Proxy) pipe(src, dst io.ReadWriter) {
@@ -235,181 +165,78 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 		//
 		mongobuf := bytes.NewBuffer(b)
 
-		totalLen, _ := readInt32(mongobuf)
-		responseId, _ := readInt32(mongobuf)
-		responseTo, _ := readInt32(mongobuf)
-		opCode, _ := readInt32(mongobuf)
-
-		// header := mongo.MsgHeader{}
-		// err = binary.Read(mongobuf, binary.BigEndian, &header)
-		if err != nil {
+		msgHead := mongo.MsgHead{}
+		if err := msgHead.ReadFromBuffer(mongobuf); err != nil {
 			p.Log.Debug("MsgHeader read failed: '%s'\n", err)
-		} else {
-			p.Log.Debug("totalLen: %d", totalLen)
-			p.Log.Debug("responseId: %d", responseId)
-			p.Log.Debug("responseTo: %d", responseTo)
-			p.Log.Debug("opCode: %d", opCode)
 		}
+		p.Log.Debug("   msgHead=%s", msgHead)
 
-		var query bson.D
 		shouldDualWrite := false
 		var dualWriteBytes []byte
-		if opCode == 2004 {
-			var flags mongo.QueryOpFlags
-			err = binary.Read(mongobuf, binary.LittleEndian, &flags)
-			if err != nil {
-				p.Log.Debug("Failed to read flags: %s", err)
-			}
-
-			var collection = readString(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to read collection: %s", err)
-			}
-
-			p.Log.Debug("Collection: %s", collection)
-
-			var skip int32
-
-			err = binary.Read(mongobuf, binary.LittleEndian, &skip)
-			if err != nil {
-				p.Log.Debug("Failed to read skip: %s", err)
-			}
-
-			p.Log.Debug("Skip: %d", skip)
-
-			var limit int32
-
-			err = binary.Read(mongobuf, binary.LittleEndian, &limit)
-			if err != nil {
-				p.Log.Debug("Failed to read limit: %s", err)
-			}
-
-			p.Log.Debug("Limit: %d", limit)
-
-			rawBson, err := readRawBSON(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to parse query: %s", err)
-			}
-
-			err = bson.Unmarshal(rawBson, &query)
-			if err != nil {
-				p.Log.Debug("Failed to unmarshal query: %s", err)
-			}
-			p.Log.Debug("QUERY: %v", query)
-
-			if query.Map()["insert"] != nil {
-				p.Log.Debug("Inserting into: %s", query.Map()["insert"])
-
-				dualWriteTable := "employees"
-				query[0].Value = dualWriteTable
-				dualWriteQuery, err := bson.Marshal(query)
-				if err != nil {
-					p.Log.Debug("Failed to unmarshal query: %s", err)
-				}
-				p.Log.Debug("Dual write query: %v", query)
-
-				newBuf := bytes.NewBuffer([]byte{})
-				WriteInt(newBuf, totalLen)       // Modified after
-				WriteInt(newBuf, responseId+100) // Modified for uniqueness
-				WriteInt(newBuf, responseTo)
-				WriteInt(newBuf, opCode)
-				WriteInt(newBuf, int32(flags))
-				newBuf.WriteString(collection)
-				newBuf.WriteByte(0x0) // String null terminator
-				WriteInt(newBuf, skip)
-				WriteInt(newBuf, limit)
-				newBuf.Write(dualWriteQuery)
-				dualWriteBytesLocal := newBuf.Bytes()
-				newQueryLen := len(dualWriteBytesLocal)
-				dualWriteBytes = make([]byte, newQueryLen)
-				for i := 1; i < newQueryLen; i++ {
-					dualWriteBytes[i] = dualWriteBytesLocal[i]
-				}
-				shouldDualWrite = true
-			}
-		} else if opCode == 2010 {
-			var database = readString(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to read database: %s", err)
+		switch msgHead.Opcode {
+		case mongo.Opcode_QUERY:
+			queryOp := mongo.QueryOp{}
+			if err := queryOp.ReadFromBuffer(mongobuf); err != nil {
+				p.Log.Debug("Failed to read queryOp: %s", err)
 			} else {
-				p.Log.Debug("   database=%s", database)
+				p.Log.Debug("   queryOp=%s", queryOp)
 			}
 
-			var commandName = readString(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to read commandName: %s", err)
+			// if query.Map()["insert"] != nil {
+			// 	p.Log.Debug("Inserting into: %s", query.Map()["insert"])
+
+			// 	dualWriteTable := "employees"
+			// 	query[0].Value = dualWriteTable
+			// 	dualWriteQuery, err := bson.Marshal(query)
+			// 	if err != nil {
+			// 		p.Log.Debug("Failed to unmarshal query: %s", err)
+			// 	}
+			// 	p.Log.Debug("Dual write query: %v", query)
+
+			// 	newBuf := bytes.NewBuffer([]byte{})
+			// 	WriteInt(newBuf, totalLen)       // Modified after
+			// 	WriteInt(newBuf, responseId+100) // Modified for uniqueness
+			// 	WriteInt(newBuf, responseTo)
+			// 	WriteInt(newBuf, opCode)
+			// 	WriteInt(newBuf, int32(queryOp.Flags))
+			// 	newBuf.WriteString(queryOp.Collection)
+			// 	newBuf.WriteByte(0x0) // String null terminator
+			// 	WriteInt(newBuf, queryOp.Skip)
+			// 	WriteInt(newBuf, queryOp.Limit)
+			// 	newBuf.Write(dualWriteQuery)
+			// 	dualWriteBytesLocal := newBuf.Bytes()
+			// 	newQueryLen := len(dualWriteBytesLocal)
+			// 	dualWriteBytes = make([]byte, newQueryLen)
+			// 	for i := 1; i < newQueryLen; i++ {
+			// 		dualWriteBytes[i] = dualWriteBytesLocal[i]
+			// 	}
+			// 	shouldDualWrite = true
+			// }
+		case mongo.Opcode_COMMAND:
+			commandOp := mongo.CommandOp{}
+			if err := commandOp.ReadFromBuffer(mongobuf); err != nil {
+				p.Log.Debug("Failed to read commandOp: %s", err)
 			} else {
-				p.Log.Debug("   commandName=%s", commandName)
+				p.Log.Debug("   commandOp=%s", commandOp)
 			}
-
-			metadata, err := readBSON(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to read BSON: %s", err)
+		case mongo.Opcode_COMMANDREPLY:
+			commandReplyOp := mongo.CommandReplyOp{}
+			if err := commandReplyOp.ReadFromBuffer(mongobuf); err != nil {
+				p.Log.Debug("Failed to read commandReplyOp: %s", err)
 			} else {
-				p.Log.Debug("   metadata=%v", metadata)
+				p.Log.Debug("   commandReplyOp=%s", commandReplyOp)
 			}
-
-			commandArgs, err := readBSON(mongobuf)
-			if err != nil {
-				p.Log.Debug("Failed to read BSON: %s", err)
+		case mongo.Opcode_REPLY:
+			replyOp := mongo.ReplyOp{}
+			if err := replyOp.ReadFromBuffer(mongobuf); err != nil {
+				p.Log.Debug("Failed to read replyOp: %s", err)
 			} else {
-				p.Log.Debug("   commandArgs=%v", commandArgs)
+				p.Log.Debug("   replyOp=%s", replyOp)
 			}
-
-			for mongobuf.Len() != 0 {
-				document, err := readBSON(mongobuf)
-				if err != nil {
-					p.Log.Debug("Failed to read BSON: %s", err)
-				} else {
-					p.Log.Debug("   document=%v", document)
-				}
-			}
-
-			// document metadata;    // a BSON document containing any metadata
-			// document commandArgs; // a BSON document containing the command arguments
-			// inputDocs;            // a set of zero or more documents
-		} else if opCode == 1 {
-			type replyOp struct {
-				Flags     uint32
-				CursorID  int64
-				FirstDoc  int32
-				ReplyDocs int32
-			}
-
-			reply := replyOp{}
-			err = binary.Read(mongobuf, binary.LittleEndian, &reply)
-			if err != nil {
-				p.Log.Debug("Failed to read flags: %s", err)
-			}
-
-			for mongobuf.Len() != 0 {
-				document, err := readBSON(mongobuf)
-				if err != nil {
-					p.Log.Debug("Failed to read BSON: %s", err)
-				} else {
-					p.Log.Debug("   document=%v", document)
-				}
-			}
-
-			// int32     responseFlags;  // bit vector - see details below
-			// int64     cursorID;       // cursor id if client needs to do get more's
-			// int32     startingFrom;   // where in the cursor this reply is starting
-			// int32     numberReturned; // number of documents in the reply
-			// document* documents;      // documents
+		default:
+			p.Log.Warn("unhandled opcode=%d", msgHead.Opcode)
 		}
 
-		// 	err = bson.Unmarshal(queryop_bytes, &out)
-		// 	if err == nil {
-		// 		p.Log.Debug("==== UNMARSHALLED ====")
-		// 		p.Log.Debug("QueryOp: %v", out)
-		// 	} else {
-		// 		p.Log.Debug("QueryOp unmarshal failed '%s'", err)
-		// 		p.Log.Debug("Bytes: %b", queryop_bytes)
-		//
-		// 	}
-		// } else {
-		// }
-		//show output
 		p.Log.Debug(dataDirection, n, "")
 		p.Log.Trace(byteFormat, b)
 

@@ -31,8 +31,23 @@ func main() {
 	// Collection People
 	c := session.DB("test").C("people")
 
-	// Insert Datas
+	// Insert people
 	err = c.Insert(&Person{Name: "Ale", Hobbies: []string{"coding", "running"}})
+	if err != nil {
+		panic(err)
+	}
+
+	// Query all people
+	var result []struct{ Name string }
+	iter := c.Find(nil).Limit(2).Iter()
+	err = iter.All(&result)
+	if err != nil {
+		panic(err)
+	}
+
+	// Query some people
+	iter = c.Find(&Person{Name: "Ale"}).Limit(2).Iter()
+	err = iter.All(&result)
 	if err != nil {
 		panic(err)
 	}

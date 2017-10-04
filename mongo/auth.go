@@ -1,13 +1,5 @@
 package mongo
 
-type MsgHeader struct {
-	MessageLength int8 // total message size, including this
-	RequestID     int8 // identifier for this message
-	ResponseTo    int8 // requestID from the original request
-	//   (used in responses from db)
-	OpCode int8 // request type - see table below
-}
-
 type AuthCmd struct {
 	Authenticate int
 
