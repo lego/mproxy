@@ -1,4 +1,4 @@
-package: github.com/xLegoz/mproxy
+package: github.com/lego/mproxy
 import:
 - package: github.com/mgutz/ansi
 - package: gopkg.in/mgo.v2

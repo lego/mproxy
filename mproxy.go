@@ -8,7 +8,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/xLegoz/mproxy/proxy"
+	"github.com/lego/mproxy/proxy"
 )
 
 var (

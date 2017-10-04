@@ -7,7 +7,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/xLegoz/mproxy/mongo"
+	"github.com/lego/mproxy/mongo"
 	"gopkg.in/mgo.v2/bson"
 )
 
