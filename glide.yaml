@@ -2,3 +2,5 @@ package: github.com/lego/mproxy
 import:
 - package: github.com/mgutz/ansi
 - package: gopkg.in/mgo.v2
+- package: github.com/pkg/errors
+  version: ^0.8.0

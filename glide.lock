@@ -1,5 +1,5 @@
-hash: eb4c574278f4ec1f70072f5f24b74e61c50c8c755b75ca8c805fccccba795121
-updated: 2017-10-04T00:24:57.94288285-04:00
+hash: 0340cbf26698f320f88d2adbc0bdc221595206bac553752789f8c1ec3c987216
+updated: 2017-10-04T00:45:11.384128551-04:00
 imports:
 - name: github.com/mattn/go-colorable
   version: ad5389df28cdac544c99bd7b9161a0b5b6ca9d1b
@@ -7,6 +7,8 @@ imports:
   version: a5cdd64afdee435007ee3e9f6ed4684af949d568
 - name: github.com/mgutz/ansi
   version: 9520e82c474b0a04dd04f8a40959027271bab992
+- name: github.com/pkg/errors
+  version: 645ef00459ed84a119197bfb8d8205042c6df63d
 - name: golang.org/x/sys
   version: 314a259e304ff91bd6985da2a7149bbf91237993
   subpackages:
