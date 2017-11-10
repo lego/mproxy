@@ -1,9 +1,9 @@
 package mongo
 
 import (
-	"bytes"
 	"encoding/binary"
 	"fmt"
+	"io"
 )
 
 type MsgHead struct {
@@ -13,11 +13,28 @@ type MsgHead struct {
 	Opcode     Opcode
 }
 
-func (m *MsgHead) ReadFromBuffer(buf *bytes.Buffer) error {
-	binary.Read(buf, binary.LittleEndian, m)
-	return nil
+func NewMsgHead(op Op, responseID, responseTo int32) *MsgHead {
+	return &MsgHead{
+		TotalLen:   MsgHeadSize() + op.Size(),
+		Opcode:     op.Opcode(),
+		ResponseID: responseID,
+		ResponseTo: responseTo,
+	}
+}
+
+func (m *MsgHead) ReadFromBuffer(buf io.Reader) error {
+	return binary.Read(buf, binary.LittleEndian, m)
+}
+
+func (m *MsgHead) WriteToBuffer(buf io.Writer) error {
+	return binary.Write(buf, binary.LittleEndian, m)
 }
 
 func (m MsgHead) String() string {
-	return fmt.Sprintf("<MsgHead TotalLen=%d ResponseID=%d ReponseTo=%d Opcode=%d>", m.TotalLen, m.ResponseID, m.ResponseTo, m.Opcode)
+	return fmt.Sprintf("<MsgHead Opcode=%s ResponseID=%d ReponseTo=%d TotalLen=%d>", m.Opcode, m.ResponseID, m.ResponseTo, m.TotalLen)
+}
+
+func MsgHeadSize() int32 {
+	// 4 int32s
+	return 4 * 4
 }

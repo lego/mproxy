@@ -3,10 +3,13 @@ package proxy
 import (
 	"bytes"
 	"crypto/tls"
+	"fmt"
 	"io"
 	"net"
 
 	"github.com/lego/mproxy/mongo"
+	"github.com/lego/mproxy/util/context"
+	"github.com/lego/mproxy/util/log"
 )
 
 // Proxy - Manages a Proxy connection, piping data between local and remote.
@@ -25,8 +28,8 @@ type Proxy struct {
 
 	// Settings
 	Nagles    bool
-	Log       Logger
 	OutputHex bool
+	ctx       *context.Context
 }
 
 // New - Create a new Proxy instance. Takes over local connection passed in,
@@ -38,7 +41,7 @@ func New(lconn *net.TCPConn, laddr, raddr *net.TCPAddr) *Proxy {
 		raddr:  raddr,
 		erred:  false,
 		errsig: make(chan bool),
-		Log:    NullLogger{},
+		ctx:    context.NewContext(&log.NullLogger{}),
 	}
 }
 
@@ -56,6 +59,10 @@ type setNoDelayer interface {
 	SetNoDelay(bool) error
 }
 
+func (p *Proxy) Ctx() *context.Context {
+	return p.ctx
+}
+
 // Start - open connection to remote and start proxying data.
 func (p *Proxy) Start() {
 	defer p.lconn.Close()
@@ -68,7 +75,7 @@ func (p *Proxy) Start() {
 		p.rconn, err = net.DialTCP("tcp", nil, p.raddr)
 	}
 	if err != nil {
-		p.Log.Warn("Remote connection failed: %s", err)
+		p.ctx.Log.Warn("Remote connection failed: %+v", err)
 		return
 	}
 	defer p.rconn.Close()
@@ -84,15 +91,16 @@ func (p *Proxy) Start() {
 	}
 
 	//display both ends
-	p.Log.Info("Opened %s >>> %s", p.laddr.String(), p.raddr.String())
+	p.ctx.Log.Info("Opened %s >>> %s", p.laddr.String(), p.raddr.String())
 
 	//bidirectional copy
 	go p.pipe(p.lconn, p.rconn)
 	go p.pipe(p.rconn, p.lconn)
 
 	//wait for close...
+
 	<-p.errsig
-	p.Log.Info("Closed (%d bytes sent, %d bytes recieved)", p.sentBytes, p.receivedBytes)
+	p.ctx.Log.Info("Closed (%d bytes sent, %d bytes recieved)", p.sentBytes, p.receivedBytes)
 }
 
 func (p *Proxy) err(s string, err error) {
@@ -100,21 +108,20 @@ func (p *Proxy) err(s string, err error) {
 		return
 	}
 	if err != io.EOF {
-		p.Log.Warn(s, err)
+		p.ctx.Log.Warn(s, err)
 	}
 	p.errsig <- true
 	p.erred = true
 }
 
-func WriteInt(b *bytes.Buffer, i int32) {
-	// FIXME(joey): replace with binary.Write(..., binary.LittleEndian, ...)
-	b.Write([]byte{
-		byte(i),
-		byte(i >> 8),
-		byte(i >> 16),
-		byte(i >> 24),
-	})
-}
+// func WriteInt(b *bytes.Buffer, i int32) {
+// 	binary.Write(b, binary.LittleEndian, []byte{
+// 		byte(i),
+// 		byte(i >> 8),
+// 		byte(i >> 16),
+// 		byte(i >> 24),
+// 	})
+// }
 
 func (p *Proxy) pipe(src, dst io.ReadWriter) {
 	islocal := src == p.lconn
@@ -133,6 +140,8 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 		byteFormat = "%s"
 	}
 
+	responseID := int32(400)
+
 	//directional copy (64k buffer)
 	buff := make([]byte, 0xffff)
 	for {
@@ -142,7 +151,11 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 			return
 		}
 		b := buff[:n]
-		p.Log.Debug("=====NEW MESSAGE=====")
+		if islocal {
+			p.ctx.Log.LogC(log.Info, log.RedEmphasized, "INCOMING")
+		} else {
+			p.ctx.Log.LogC(log.Info, log.BlueEmphasized, "OUTGOING")
+		}
 
 		// //execute match
 		// if p.Matcher != nil {
@@ -157,19 +170,19 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 		// out = mongo.AuthCmd{}
 		// err = bson.Unmarshal(b, &out)
 		// if err == nil {
-		// 	p.Log.Debug("==== UNMARSHALLED ====%v\n", out)
-		// 	p.Log.Debug("AuthCmd: %v\n", out)
+		// 	p.ctx.Log.Debug("==== UNMARSHALLED ====%v\n", out)
+		// 	p.ctx.Log.Debug("AuthCmd: %v\n", out)
 		// } else {
-		// 	p.Log.Debug("AuthCmd unmarshal failed '%s'\n", err)
+		// 	p.ctx.Log.Debug("AuthCmd unmarshal failed '%s'\n", err)
 		// }
 		//
 		mongobuf := bytes.NewBuffer(b)
 
 		msgHead := mongo.MsgHead{}
 		if err := msgHead.ReadFromBuffer(mongobuf); err != nil {
-			p.Log.Debug("MsgHeader read failed: '%s'\n", err)
+			p.ctx.Log.Warn("MsgHeader read failed: '%s'\n", err)
 		}
-		p.Log.Debug("   msgHead=%s", msgHead)
+		p.ctx.Log.Debug("   %s", msgHead)
 
 		shouldDualWrite := false
 		var dualWriteBytes []byte
@@ -177,21 +190,51 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 		case mongo.Opcode_QUERY:
 			queryOp := mongo.QueryOp{}
 			if err := queryOp.ReadFromBuffer(mongobuf); err != nil {
-				p.Log.Debug("Failed to read queryOp: %s", err)
+				p.ctx.Log.Warn("failed to read queryOp: %+v", err)
 			} else {
-				p.Log.Debug("   queryOp=%s", queryOp)
+				p.ctx.Log.Debug("   %s", queryOp)
+			}
+
+			if isNegotiation(p.ctx, queryOp) {
+				replyOp, err := createNegotiationReply(p.ctx, queryOp)
+				if err != nil {
+					p.ctx.Log.Warn("failed to create negotiation reply: %+v", err)
+					panic("oops")
+				}
+				p.ctx.Log.LogC(log.Info, log.BlueEmphasized, "GENERATED OUTGOING")
+				p.ctx.Log.Debug("   %s", replyOp)
+				replyMsgHead := mongo.NewMsgHead(replyOp, 0 /* responseID */, 0 /* reponseTo */)
+				replyMsgHead.WriteToBuffer(src)
+				replyOp.WriteToBuffer(src)
+				p.receivedBytes += uint64(replyMsgHead.TotalLen)
+				continue
+			} else if isQuery(p.ctx, queryOp) {
+				p.ctx.Log.Debug("is a query!")
+				replyOp, err := handleQuery(p.ctx, queryOp)
+				if err != nil {
+					p.ctx.Log.Warn("failed to handle query reply: %+v", err)
+				} else {
+					p.ctx.Log.LogC(log.Info, log.BlueEmphasized, "GENERATED OUTGOING")
+					p.ctx.Log.Debug("   %s", replyOp)
+					replyMsgHead := mongo.NewMsgHead(replyOp, responseID, msgHead.ResponseID)
+					replyMsgHead.WriteToBuffer(src)
+					replyOp.WriteToBuffer(src)
+					p.receivedBytes += uint64(replyMsgHead.TotalLen)
+					responseID++
+					continue
+				}
 			}
 
 			// if query.Map()["insert"] != nil {
-			// 	p.Log.Debug("Inserting into: %s", query.Map()["insert"])
+			// 	p.ctx.Log.Debug("Inserting into: %s", query.Map()["insert"])
 
 			// 	dualWriteTable := "employees"
 			// 	query[0].Value = dualWriteTable
 			// 	dualWriteQuery, err := bson.Marshal(query)
 			// 	if err != nil {
-			// 		p.Log.Debug("Failed to unmarshal query: %s", err)
+			// 		p.ctx.Log.Debug("failed to unmarshal query: %+v", err)
 			// 	}
-			// 	p.Log.Debug("Dual write query: %v", query)
+			// 	p.ctx.Log.Debug("Dual write query: %v", query)
 
 			// 	newBuf := bytes.NewBuffer([]byte{})
 			// 	WriteInt(newBuf, totalLen)       // Modified after
@@ -215,30 +258,38 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 		case mongo.Opcode_COMMAND:
 			commandOp := mongo.CommandOp{}
 			if err := commandOp.ReadFromBuffer(mongobuf); err != nil {
-				p.Log.Debug("Failed to read commandOp: %s", err)
+				p.ctx.Log.Warn("failed to read commandOp: %+v", err)
 			} else {
-				p.Log.Debug("   commandOp=%s", commandOp)
+				p.ctx.Log.Debug("   commandOp=%s", commandOp)
 			}
 		case mongo.Opcode_COMMANDREPLY:
 			commandReplyOp := mongo.CommandReplyOp{}
 			if err := commandReplyOp.ReadFromBuffer(mongobuf); err != nil {
-				p.Log.Debug("Failed to read commandReplyOp: %s", err)
+				p.ctx.Log.Warn("failed to read commandReplyOp: %+v", err)
 			} else {
-				p.Log.Debug("   commandReplyOp=%s", commandReplyOp)
+				p.ctx.Log.Debug("   commandReplyOp=%s", commandReplyOp)
 			}
 		case mongo.Opcode_REPLY:
 			replyOp := mongo.ReplyOp{}
 			if err := replyOp.ReadFromBuffer(mongobuf); err != nil {
-				p.Log.Debug("Failed to read replyOp: %s", err)
+				p.ctx.Log.Warn("failed to read replyOp: %+v", err)
 			} else {
-				p.Log.Debug("   replyOp=%s", replyOp)
+				p.ctx.Log.Debug("   %s", replyOp)
 			}
+
+			p.ctx.Log.Debug("documents: %#v", replyOp.Documents)
+
+			// p.ctx.Log.Warn("negotiation replyOp docLen=%d", len(replyOp.Documents))
+			// for i, doc := range replyOp.Documents {
+			// 	p.ctx.Log.Warn("replyOp[%d]=%v", i, doc)
+			// }
+			// p.ctx.Log.Warn("neg replyMap=%v", replyOp.Documents.Map())
 		default:
-			p.Log.Warn("unhandled opcode=%d", msgHead.Opcode)
+			panic(fmt.Sprintf("unhandled opcode=%s", msgHead.Opcode))
 		}
 
-		p.Log.Debug(dataDirection, n, "")
-		p.Log.Trace(byteFormat, b)
+		p.ctx.Log.Debug(dataDirection, n, "")
+		p.ctx.Log.Trace(byteFormat, b)
 
 		//write out result
 		n, err = dst.Write(b)
@@ -254,13 +305,13 @@ func (p *Proxy) pipe(src, dst io.ReadWriter) {
 
 		// Dual write to separate table
 		if shouldDualWrite {
-			p.Log.Debug("=== DUAL WRITE BEGIN ===")
-			p.Log.Debug(dataDirection, len(dualWriteBytes), "")
-			p.Log.Trace(byteFormat, dualWriteBytes)
-			p.Log.Debug("=== DUAL WRITE END ===")
+			p.ctx.Log.Debug("=== DUAL WRITE BEGIN ===")
+			p.ctx.Log.Debug(dataDirection, len(dualWriteBytes), "")
+			p.ctx.Log.Trace(byteFormat, dualWriteBytes)
+			p.ctx.Log.Debug("=== DUAL WRITE END ===")
 			n, err = dst.Write(dualWriteBytes)
 			if err == nil {
-				p.Log.Debug("Dual write success")
+				p.ctx.Log.Debug("Dual write success")
 			}
 		}
 	}

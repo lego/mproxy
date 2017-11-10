@@ -15,12 +15,42 @@ type QueryOpFlags uint32
 
 const (
 	_ QueryOpFlags = 1 << iota
-	flagTailable
-	flagSlaveOk
-	flagLogReplay
-	flagNoCursorTimeout
-	flagAwaitData
+	QueryFlagTailable
+	QueryFlagSlaveOk
+	QueryFlagLogReplay
+	QueryFlagNoCursorTimeout
+	QueryFlagAwaitData
 )
+
+func (f QueryOpFlags) String() string {
+	var buf bytes.Buffer
+	var flags []string
+	if (f & QueryFlagTailable) != 0 {
+		flags = append(flags, "tailable")
+	}
+	if (f & QueryFlagSlaveOk) != 0 {
+		flags = append(flags, "slaveOk")
+	}
+	if (f & QueryFlagLogReplay) != 0 {
+		flags = append(flags, "logReplay")
+	}
+	if (f & QueryFlagNoCursorTimeout) != 0 {
+		flags = append(flags, "noCursorTimeout")
+	}
+	if (f & QueryFlagAwaitData) != 0 {
+		flags = append(flags, "awaitData")
+	}
+
+	buf.WriteByte('[')
+	for i, flag := range flags {
+		if i > 0 {
+			buf.WriteString(", ")
+		}
+		buf.WriteString(flag)
+	}
+	buf.WriteByte(']')
+	return buf.String()
+}
 
 type Mode int
 
@@ -52,22 +82,22 @@ type QueryOp struct {
 
 func (op *QueryOp) ReadFromBuffer(buf *bytes.Buffer) error {
 	if err := binary.Read(buf, binary.LittleEndian, &op.Flags); err != nil {
-		return errors.Wrap(err, "Failed to read Flags")
+		return errors.Wrap(err, "failed to read Flags")
 	}
 
 	op.Collection = bytesutil.ReadCString(buf)
 
 	if err := binary.Read(buf, binary.LittleEndian, &op.Skip); err != nil {
-		return errors.Wrap(err, "Failed to read Skip")
+		return errors.Wrap(err, "failed to read Skip")
 	}
 
 	if err := binary.Read(buf, binary.LittleEndian, &op.Limit); err != nil {
-		return errors.Wrap(err, "Failed to read Limit")
+		return errors.Wrap(err, "failed to read Limit")
 	}
 
 	bsonValue, err := bytesutil.ReadBSON(buf)
 	if err != nil {
-		return errors.Wrap(err, "Failed to read Query")
+		return errors.Wrap(err, "failed to read Query")
 	}
 	op.Query = bsonValue
 
@@ -77,7 +107,7 @@ func (op *QueryOp) ReadFromBuffer(buf *bytes.Buffer) error {
 
 	bsonValue, err = bytesutil.ReadBSON(buf)
 	if err != nil {
-		return errors.Wrap(err, "Failed to read Selector")
+		return errors.Wrap(err, "failed to read Selector")
 	}
 	op.Selector = bsonValue
 
@@ -85,7 +115,7 @@ func (op *QueryOp) ReadFromBuffer(buf *bytes.Buffer) error {
 }
 
 func (op QueryOp) String() string {
-	return fmt.Sprintf("<QueryOp Flags=%d Collection=%s Skip=%d Limit=%d Query=%v Selector=%v>", op.Flags, op.Collection, op.Skip, op.Limit, op.Query, op.Selector)
+	return fmt.Sprintf("<QueryOp Collection=%s Skip=%d Limit=%d Query=%v Selector=%v Flags=%s>", op.Collection, op.Skip, op.Limit, op.Query, op.Selector, op.Flags)
 }
 
 // &mgo.queryOp{collection:"test.$cmd", query:bson.D{bson.DocElem{Name:"insert", Value:"people"}, bson.DocElem{Name:"documents", Value:[]interface {}{(*main.Person)(0xc4200164b0)}}, bson.DocElem{Name:"writeConcern", Value:(*mgo.getLastError)(0xc4200188a0)}, bson.DocElem{Name:"ordered", Value:true}}, skip:0, limit:-1, selector:interface {}(nil), flags:0x0, replyFunc:(mgo.replyFunc)(0x1153180), mode:1, options:mgo.queryWrapper{Query:interface {}(nil), OrderBy:interface {}(nil), Hint:interface {}(nil), Explain:false, Snapshot:false, ReadPreference:bson.D(nil), MaxScan:0, MaxTimeMS:0, Comment:""}, hasOptions:false, serverTags:[]bson.D(nil)}
