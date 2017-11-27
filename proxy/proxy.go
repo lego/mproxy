@@ -7,9 +7,9 @@ import (
 	"io"
 	"net"
 
-	"github.com/lego/mproxy/mongo"
-	"github.com/lego/mproxy/util/context"
-	"github.com/lego/mproxy/util/log"
+	"github.com/lego/mongotunnel/mongo"
+	"github.com/lego/mongotunnel/util/context"
+	"github.com/lego/mongotunnel/util/log"
 )
 
 // Proxy - Manages a Proxy connection, piping data between local and remote.

@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"fmt"
 
-	"github.com/lego/mproxy/util/bytesutil"
+	"github.com/lego/mongotunnel/util/bytesutil"
 	"github.com/pkg/errors"
 	"gopkg.in/mgo.v2/bson"
 )

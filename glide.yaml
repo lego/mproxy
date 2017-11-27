@@ -1,4 +1,4 @@
-package: github.com/lego/mproxy
+package: github.com/lego/mongotunnel
 import:
 - package: github.com/mgutz/ansi
 - package: gopkg.in/mgo.v2

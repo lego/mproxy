@@ -1,8 +1,8 @@
 package proxy
 
 import (
-	"github.com/lego/mproxy/mongo"
-	"github.com/lego/mproxy/util/context"
+	"github.com/lego/mongotunnel/mongo"
+	"github.com/lego/mongotunnel/util/context"
 	"github.com/pkg/errors"
 	"gopkg.in/mgo.v2/bson"
 )

@@ -11,8 +11,8 @@ import (
 
 	_ "github.com/lib/pq"
 
-	"github.com/lego/mproxy/proxy"
-	"github.com/lego/mproxy/util/log"
+	"github.com/lego/mongotunnel/proxy"
+	"github.com/lego/mongotunnel/util/log"
 )
 
 var (

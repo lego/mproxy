@@ -3,7 +3,7 @@ package context
 import (
 	"database/sql"
 
-	"github.com/lego/mproxy/util/log"
+	"github.com/lego/mongotunnel/util/log"
 )
 
 type Context struct {

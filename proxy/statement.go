@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lego/mproxy/mongo"
-	"github.com/lego/mproxy/util/context"
+	"github.com/lego/mongotunnel/mongo"
+	"github.com/lego/mongotunnel/util/context"
 	"gopkg.in/mgo.v2/bson"
 )
 
